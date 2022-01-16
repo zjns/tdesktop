@@ -1,8 +1,8 @@
-name: Master branch updater.
+name: Master branch updater
 
 on:
   release:
-    types: released
+    types: [released]
 
 jobs:
   updater:

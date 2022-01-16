@@ -1,0 +1,13 @@
+/*
+This file is part of Telegram Desktop,
+the official desktop application for the Telegram messaging service.
+
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+*/
+
+"CFBundleName" = "电报";
+"CFBundleDisplayName" = "电报";
+"CFBundleGetInfoString" = "电报 - 即时通讯应用程序";
+"NSMicrophoneUsageDescription"="我们需要访问麦克风，以便您可以录制语音消息并拨打电话。";
+"NSCameraUsageDescription" = "我们需要访问相机，以便您可以录制视频消息并拨打视频电话。";

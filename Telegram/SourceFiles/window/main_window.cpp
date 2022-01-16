@@ -808,7 +808,9 @@ void MainWindow::updateUnreadCounter() {
 	}
 
 	const auto counter = Core::App().unreadBadge();
-	setTitle((counter > 0) ? qsl("Telegram (%1)").arg(counter) : qsl("Telegram"));
+    const auto unread = tr::lng_main_telegram_unread(tr::now, lt_count, counter);
+    const auto nono = tr::lng_main_telegram(tr::now);
+	setTitle((counter > 0) ? unread : nono);
 
 	unreadCounterChangedHook();
 }

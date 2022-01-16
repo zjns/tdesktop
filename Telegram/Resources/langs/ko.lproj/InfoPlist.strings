@@ -5,7 +5,3 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
-
-"lng_main_telegram" = "Telegram";
-"lng_main_telegram_unread#one" = "Telegram ({count})";
-"lng_main_telegram_unread#other" = "Telegram ({count})";

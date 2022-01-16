@@ -1,6 +1,7 @@
-name: Docker.
+name: Docker
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - '.github/workflows/docker.yml'
@@ -14,6 +15,7 @@ jobs:
   docker:
     name: Ubuntu
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Clone.

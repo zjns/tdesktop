@@ -1,0 +1,13 @@
+/*
+This file is part of Telegram Desktop,
+the official desktop application for the Telegram messaging service.
+
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+*/
+
+"CFBundleName" = "Telegram";
+"CFBundleDisplayName" = "Telegram";
+"CFBundleGetInfoString" = "Telegram Desktop messaging app";
+"NSMicrophoneUsageDescription"="We need access to your microphone so that you can record voice messages and make calls.";
+"NSCameraUsageDescription" = "We need access to your camera so that you can record video messages and make video calls.";
