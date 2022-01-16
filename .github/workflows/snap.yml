@@ -1,6 +1,18 @@
-name: Snap.
+name: Snap
 
 on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        type: boolean
+        description: Upload app?
+        required: true
+        default: false
+      up_to_tg:
+        type: boolean
+        description: Send to Telegram?
+        required: true
+        default: false
   push:
     paths-ignore:
       - 'docs/**'
@@ -41,29 +53,68 @@ jobs:
   snap:
     name: Ubuntu
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || contains(join(github.event.commits.*.message), 'Version') || contains(join(github.event.commits.*.message), 'version')
 
     env:
-      UPLOAD_ARTIFACT: "false"
+      UPLOAD_ARTIFACT: ${{ github.event.inputs.upload }}
+      SEND_TO_TG: ${{ github.event.inputs.up_to_tg }}
 
     steps:
-      - name: Clone.
+      - name: Check event
+        run: |
+          flag="${{ contains(join(github.event.commits.*.message), 'Version') || contains(join(github.event.commits.*.message), 'version') }}"
+          if [ "$flag" = "true" ]; then
+            echo "Found new version, build release now."
+            echo "SEND_TO_TG=true" >> $GITHUB_ENV
+            echo "UPLOAD_ARTIFACT=false" >> $GITHUB_ENV
+          fi
+
+      - name: Clone
         uses: actions/checkout@v3.1.0
         with:
           fetch-depth: 0
           submodules: recursive
 
-      - name: First set up.
+      - name: Setup python
+        uses: actions/setup-python@v2
+        if: env.SEND_TO_TG == 'true'
+        with:
+          python-version: '3.9.x'
+      - name: Prepare python packages
+        if: env.SEND_TO_TG == 'true'
+        run: |
+          pip install -U wheel
+          pip install -U pyrogram tgcrypto
+
+      - name: Get app version
+        run: |
+          echo "APP_VER_NAME=`awk '$1 == "AppVersionStr" {print $2}' ./Telegram/build/version`" >> $GITHUB_ENV
+          echo "APP_VER_CODE=`awk '$1 == "AppVersion" {print $2}' ./Telegram/build/version`" >> $GITHUB_ENV
+          echo "APP_BETA=`awk '$1 == "BetaChannel" {print $2}' ./Telegram/build/version`" >> $GITHUB_ENV
+
+      - name: Patch snapcraft.yaml
+        env:
+          API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          sed -r -i "s/(-DTDESKTOP_API_ID)=(.*)/\1=$API_ID/" ./snap/snapcraft.yaml
+          sed -r -i "s/(-DTDESKTOP_API_HASH)=(.*)/\1=$API_HASH/" ./snap/snapcraft.yaml
+
+          #if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          sed -i '/version="${version}/d' ./snap/snapcraft.yaml
+          #fi
+
+      - name: First set up
         run: |
           sudo snap install --classic snapcraft
           sudo usermod -aG lxd $USER
           sudo snap run lxd init --auto
           sudo snap run lxd waitready
 
-      - name: Telegram Desktop snap build.
+      - name: Telegram Desktop snap build
         run: sg lxd -c 'snap run snapcraft -v'
 
-      - name: Move artifact.
-        if: env.UPLOAD_ARTIFACT == 'true'
+      - name: Move artifact
         run: |
           artifact_name=$(echo telegram-desktop_*.snap)
           echo "ARTIFACT_NAME=$artifact_name" >> $GITHUB_ENV
@@ -73,7 +124,48 @@ jobs:
 
       - uses: actions/upload-artifact@master
         if: env.UPLOAD_ARTIFACT == 'true'
-        name: Upload artifact.
+        name: Upload artifact
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifact
+
+      - name: Send to Telegram
+        if: env.SEND_TO_TG == 'true'
+        shell: python
+        env:
+          API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT }}
+          CHANNEL_ID: ${{ secrets.TELEGRAM_TO }}
+        run: |
+          import asyncio
+          import os
+          from pyrogram import Client
+          async def main():
+            bot = Client(
+              "client",
+              in_memory=True,
+              api_id=os.environ["API_ID"],
+              api_hash=os.environ["API_HASH"],
+              bot_token=os.environ["BOT_TOKEN"],
+            )
+            async with bot:
+              ver_name = os.environ["APP_VER_NAME"]
+              ver_code = os.environ["APP_VER_CODE"]
+              channel_id = int(os.environ["CHANNEL_ID"])
+              beta = True if (os.environ["APP_BETA"] == "1") else False
+              caption = f"{ver_name} ({ver_code})\n#Telegram #Linux"
+              caption = f"{caption} #Beta" if (beta) else caption
+              document = f"artifact/{os.environ['ARTIFACT_NAME']}"
+              await bot.send_document(
+                chat_id=channel_id,
+                document=document,
+                caption=caption,
+              )
+          async def wait():
+            try:
+              await asyncio.wait_for(main(), timeout=600)
+            except asyncio.TimeoutError:
+              print("message send timeout!!!")
+              exit(1)
+          asyncio.run(wait())

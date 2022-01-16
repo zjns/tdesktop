@@ -1443,9 +1443,20 @@ elseif (APPLE)
         nl
         ko
         pt-BR
+        zh-CN
     )
     foreach (lang ${lang_packs})
         set(strings_path ${res_loc}/langs/${lang}.lproj/Localizable.strings)
+        set_source_files_properties(${strings_path} PROPERTIES
+        MACOSX_PACKAGE_LOCATION
+            Resources/${lang}.lproj
+        )
+        target_sources(Telegram PRIVATE ${strings_path})
+        source_group(TREE ${res_loc} PREFIX Resources FILES ${strings_path})
+    endforeach()
+
+    foreach (lang ${lang_packs})
+        set(strings_path ${res_loc}/langs/${lang}.lproj/InfoPlist.strings)
         set_source_files_properties(${strings_path} PROPERTIES
         MACOSX_PACKAGE_LOCATION
             Resources/${lang}.lproj

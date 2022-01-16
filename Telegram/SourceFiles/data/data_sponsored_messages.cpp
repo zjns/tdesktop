@@ -173,7 +173,8 @@ void SponsoredMessages::inject(
 }
 
 bool SponsoredMessages::canHaveFor(not_null<History*> history) const {
-	return history->peer->isChannel();
+	//return history->peer->isChannel();
+    return false;
 }
 
 void SponsoredMessages::request(not_null<History*> history, Fn<void()> done) {

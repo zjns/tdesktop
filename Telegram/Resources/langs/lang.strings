@@ -8,6 +8,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_language_name" = "English";
 "lng_switch_to_this" = "Continue in English";
 
+"lng_main_telegram" = "Telegram";
+"lng_main_telegram_unread#one" = "Telegram ({count})";
+"lng_main_telegram_unread#other" = "Telegram ({count})";
+
 "lng_menu_contacts" = "Contacts";
 "lng_menu_calls" = "Calls";
 "lng_menu_settings" = "Settings";

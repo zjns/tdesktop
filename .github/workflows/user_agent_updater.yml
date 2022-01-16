@@ -1,4 +1,4 @@
-name: User-agent updater.
+name: User-agent updater
 
 on:
   repository_dispatch:

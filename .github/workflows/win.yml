@@ -1,6 +1,35 @@
-name: Windows.
+name: Windows
 
 on:
+  schedule:
+    # UTC+8 at AM 02:45 on every 5th day-of-month
+    # to make the cache available always (7d)
+    - cron: '45 18 */5 * *'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        type: choice
+        description: Build type
+        default: Debug
+        required: true
+        options:
+          - Release
+          - Debug
+      only_cache:
+        type: boolean
+        description: Only build cache?
+        required: true
+        default: false
+      upload:
+        type: boolean
+        description: Upload app?
+        required: true
+        default: false
+      up_to_tg:
+        type: boolean
+        description: Send to Telegram?
+        required: true
+        default: false
   push:
     paths-ignore:
       - 'docs/**'
@@ -43,22 +72,38 @@ jobs:
   windows:
     name: Windows
     runs-on: windows-2022
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || contains(join(github.event.commits.*.message), 'Version') || contains(join(github.event.commits.*.message), 'version')
 
     strategy:
       matrix:
-        arch: [Win32, x64]
+        arch: [x64]
 
     env:
-      UPLOAD_ARTIFACT: "false"
-      ONLY_CACHE: "false"
-      PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+      ARCH: ${{ matrix.arch }}
+      UPLOAD_ARTIFACT: ${{ github.event.inputs.upload }}
+      SEND_TO_TG: ${{ github.event.inputs.up_to_tg }}
+      BUILD_TYPE: ${{ github.event.inputs.build_type }}
+      ONLY_CACHE: ${{ github.event.inputs.only_cache == 'true' || github.event_name == 'schedule' }}
+      PREPARE_PATH: 'Telegram/build/prepare/prepare.py'
 
     defaults:
       run:
         shell: cmd
 
     steps:
-      - name: Prepare directories.
+      - name: Check event
+        shell: bash
+        run: |
+          flag="${{ contains(join(github.event.commits.*.message), 'Version') || contains(join(github.event.commits.*.message), 'version') }}"
+          if [ "$flag" = "true" ]; then
+            echo "Found new version, build release now."
+            echo "BUILD_TYPE=Release" >> $GITHUB_ENV
+            echo "SEND_TO_TG=true" >> $GITHUB_ENV
+            echo "UPLOAD_ARTIFACT=false" >> $GITHUB_ENV
+            echo "ONLY_CACHE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Prepare directories
         run: |
           mkdir %userprofile%\TBuild
           mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
@@ -67,25 +112,55 @@ jobs:
           mkdir %userprofile%\TBuild Libraries
           mklink /d %userprofile%\TBuild\Libraries %GITHUB_WORKSPACE%\Libraries
 
-      - name: Get repository name.
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        if: env.SEND_TO_TG == 'true'
+        with:
+          python-version: '3.9.x'
+
+      - name: Prepare Python packages
+        if: env.SEND_TO_TG == 'true'
+        run: |
+          pip install -U wheel
+          pip install -U pyrogram tgcrypto
+
+      - name: Get repository name
         shell: bash
         run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
 
       - uses: ilammy/msvc-dev-cmd@v1.12.0
-        name: Native Tools Command Prompt.
+        name: Native Tools Command Prompt
         with:
-          arch: ${{ matrix.arch }}
+          arch: ${{ env.ARCH }}
 
-      - name: Clone.
+      - name: Free up some disk space before build
+        run: |
+          rmdir /S /Q "%PGROOT%"
+          rmdir /S /Q "%ANDROID_HOME%"
+          rmdir /S /Q "%JAVA_HOME_17_X64%"
+          rmdir /S /Q "%JAVA_HOME_11_X64%"
+          rmdir /S /Q "%JAVA_HOME_8_X64%"
+          rmdir /S /Q "%GOROOT_1_18_X64%"
+          rmdir /S /Q "%GOROOT_1_17_X64%"
+          rmdir /S /Q "%GOROOT_1_16_X64%"
+
+      - name: Clone
         uses: actions/checkout@v3.1.0
         with:
           submodules: recursive
           path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
 
-      - name: Python installs.
+      - name: Get app version
+        shell: bash
+        run: |
+          echo "APP_VER_NAME=`awk '$1 == "AppVersionStr" {print $2}' $TBUILD/$REPO_NAME/Telegram/build/version`" >> $GITHUB_ENV
+          echo "APP_VER_CODE=`awk '$1 == "AppVersion" {print $2}' $TBUILD/$REPO_NAME/Telegram/build/version`" >> $GITHUB_ENV
+          echo "APP_BETA=`awk '$1 == "BetaChannel" {print $2}' $TBUILD/$REPO_NAME/Telegram/build/version`" >> $GITHUB_ENV
+
+      - name: Python installs
         run: pip3 install --upgrade pywin32 six
 
-      - name: Set up environment paths.
+      - name: Set up environment paths
         shell: bash
         run: |
           echo "CACHE_KEY=$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> $GITHUB_ENV
@@ -94,12 +169,12 @@ jobs:
           git config --global user.email "you@example.com"
           git config --global user.name "Sample"
 
-      - name: NuGet sources.
+      - name: NuGet sources
         run: |
           nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
           nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
 
-      - name: Libraries cache.
+      - name: Libraries cache
         id: cache-libs
         uses: actions/cache@v3.0.11
         with:
@@ -107,13 +182,13 @@ jobs:
           key: ${{ runner.OS }}-${{ matrix.arch }}-libs-${{ env.CACHE_KEY }}
           restore-keys: ${{ runner.OS }}-${{ matrix.arch }}-libs-
 
-      - name: Libraries.
+      - name: Libraries
         env:
           GYP_MSVS_OVERRIDE_PATH: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\'
           GYP_MSVS_VERSION: 2022
-        run: '%TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent'
+        run: '%TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent'
 
-      - name: Read defines.
+      - name: Read defines
         shell: bash
         run: |
           DEFINE=""
@@ -126,36 +201,85 @@ jobs:
           fi
           echo "TDESKTOP_BUILD_DEFINE=$DEFINE" >> $GITHUB_ENV
 
-      - name: Free up some disk space.
+      - name: Free up some disk space
         run: |
           del /S Libraries\*.pdb
           del /S Libraries\*.pch
           del /S Libraries\*.obj
 
-      - name: Telegram Desktop build.
+      - name: Telegram Desktop build
         if: env.ONLY_CACHE == 'false'
+        env:
+          API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           cd %TBUILD%\%REPO_NAME%\Telegram
 
           call configure.bat ^
-          ${{ matrix.arch }} ^
-          -D TDESKTOP_API_TEST=ON ^
+          %ARCH% ^
+          -D TDESKTOP_API_TEST=OFF ^
+          -D TDESKTOP_API_ID=%API_ID% ^
+          -D TDESKTOP_API_HASH=%API_HASH% ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
           -D DESKTOP_APP_NO_PDB=ON ^
           %TDESKTOP_BUILD_DEFINE% ^
           -DCMAKE_SYSTEM_VERSION=%SDK%
 
           cd ..\out
-          msbuild -m Telegram.sln /p:Configuration=Debug,Platform=${{ matrix.arch }},DebugSymbols=false,DebugType=none
+          msbuild -m Telegram.sln /p:Configuration=%BUILD_TYPE%,Platform=%ARCH%,DebugSymbols=false,DebugType=none
 
-      - name: Move artifact.
-        if: env.UPLOAD_ARTIFACT == 'true'
+      - name: Move artifact
+        if: env.ONLY_CACHE == 'false'
         run: |
           mkdir artifact
-          move %TBUILD%\%REPO_NAME%\out\Debug\Telegram.exe artifact/
+          move %TBUILD%\%REPO_NAME%\out\%BUILD_TYPE%\Telegram.exe artifact/
+
       - uses: actions/upload-artifact@master
-        name: Upload artifact.
-        if: env.UPLOAD_ARTIFACT == 'true'
+        name: Upload artifact
+        if: env.ONLY_CACHE == 'false' && env.UPLOAD_ARTIFACT == 'true'
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifact\
+
+      - name: Send to Telegram
+        if: env.ONLY_CACHE == 'false' && env.SEND_TO_TG == 'true'
+        shell: python
+        env:
+          API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT }}
+          CHANNEL_ID: ${{ secrets.TELEGRAM_TO }}
+        run: |
+          import asyncio
+          import os
+          from pyrogram import Client
+          async def main():
+            bot = Client(
+              "client",
+              in_memory=True,
+              api_id=os.environ["API_ID"],
+              api_hash=os.environ["API_HASH"],
+              bot_token=os.environ["BOT_TOKEN"],
+            )
+            async with bot:
+              arch = os.environ["ARCH"]
+              ver_name = os.environ["APP_VER_NAME"]
+              ver_code = os.environ["APP_VER_CODE"]
+              build_type = os.environ["BUILD_TYPE"]
+              channel_id = int(os.environ["CHANNEL_ID"])
+              beta = True if (os.environ["APP_BETA"] == "1") else False
+              caption = f"{ver_name} ({ver_code})\nArch: `{arch}`\nBuild type: `{build_type}`\n#Telegram #Windows"
+              caption = f"{caption} #Beta" if (beta) else caption
+              document = "artifact\Telegram.exe"
+              await bot.send_document(
+                chat_id=channel_id,
+                document=document,
+                caption=caption,
+              )
+          async def wait():
+            try:
+              await asyncio.wait_for(main(), timeout=600)
+            except asyncio.TimeoutError:
+              print("message send timeout!!!")
+              exit(1)
+          asyncio.run(wait())

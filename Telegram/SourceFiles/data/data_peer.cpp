@@ -894,6 +894,7 @@ bool PeerData::canWrite(bool checkForForum) const {
 }
 
 bool PeerData::allowsForwarding() const {
+    if(true) return true;
 	if (const auto user = asUser()) {
 		return true;
 	} else if (const auto channel = asChannel()) {

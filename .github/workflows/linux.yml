@@ -1,6 +1,26 @@
-name: Linux.
+name: Linux
 
 on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        type: choice
+        description: Build type
+        default: Debug
+        required: true
+        options:
+          - Release
+          - Debug
+      upload:
+        type: boolean
+        description: Upload app?
+        required: true
+        default: false
+      up_to_tg:
+        type: boolean
+        description: Send to Telegram?
+        required: true
+        default: false
   push:
     paths-ignore:
       - 'docs/**'
@@ -43,6 +63,7 @@ jobs:
   linux:
     name: CentOS 7
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     container:
       image: ghcr.io/${{ github.repository }}/centos_env
       credentials:
@@ -56,30 +77,50 @@ jobs:
     strategy:
       matrix:
         defines:
-          - ""
-          - "DESKTOP_APP_DISABLE_DBUS_INTEGRATION"
-          - "DESKTOP_APP_DISABLE_X11_INTEGRATION"
-          - "DESKTOP_APP_DISABLE_WAYLAND_INTEGRATION"
+          - ''
 
     env:
-      UPLOAD_ARTIFACT: "false"
+      BUILD_TYPE: ${{ github.event.inputs.build_type }}
+      UPLOAD_ARTIFACT: ${{ github.event.inputs.upload }}
+      SEND_TO_TG: ${{ github.event.inputs.up_to_tg }}
 
     steps:
-      - name: Get repository name.
+      - name: Get repository name
         run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
 
-      - name: Clone.
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        if: env.SEND_TO_TG == 'true'
+        with:
+          python-version: '3.9.x'
+
+      - name: Prepare Python packages
+        if: env.SEND_TO_TG == 'true'
+        run: |
+          pip install -U wheel
+          pip install -U pyrogram tgcrypto
+
+      - name: Clone
         uses: actions/checkout@v3.1.0
         with:
           submodules: recursive
           path: ${{ env.REPO_NAME }}
 
-      - name: First set up.
+      - name: First set up
         run: |
           gcc --version
           ln -s /usr/src/Libraries
 
-      - name: Telegram Desktop build.
+      - name: Get app version
+        run: |
+          echo "APP_VER_NAME=`awk '$1 == "AppVersionStr" {print $2}' ./$REPO_NAME/Telegram/build/version`" >> $GITHUB_ENV
+          echo "APP_VER_CODE=`awk '$1 == "AppVersion" {print $2}' ./$REPO_NAME/Telegram/build/version`" >> $GITHUB_ENV
+          echo "APP_BETA=`awk '$1 == "BetaChannel" {print $2}' ./$REPO_NAME/Telegram/build/version`" >> $GITHUB_ENV
+
+      - name: Telegram Desktop build
+        env:
+          API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           cd $REPO_NAME/Telegram
 
@@ -98,15 +139,17 @@ jobs:
           -D CMAKE_C_FLAGS="-Werror" \
           -D CMAKE_CXX_FLAGS="-Werror" \
           -D CMAKE_EXE_LINKER_FLAGS="-s" \
-          -D TDESKTOP_API_TEST=ON \
+          -D TDESKTOP_API_TEST=OFF \
+          -D TDESKTOP_API_ID=$API_ID \
+          -D TDESKTOP_API_HASH=$API_HASH \
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF \
           $DEFINE
 
-          cmake --build ../out --config Debug --parallel
+          cmake --build ../out --config $BUILD_TYPE --parallel
 
-      - name: Check.
+      - name: Check
         run: |
-          filePath="$REPO_NAME/out/Debug/Telegram"
+          filePath="$REPO_NAME/out/$BUILD_TYPE/Telegram"
           if test -f "$filePath"; then
             echo "Build successfully done! :)"
 
@@ -117,15 +160,57 @@ jobs:
             exit 1
           fi
 
-      - name: Move artifact.
-        if: env.UPLOAD_ARTIFACT == 'true'
+      - name: Move artifact
         run: |
-          cd $REPO_NAME/out/Debug
+          cd $REPO_NAME/out/$BUILD_TYPE
           mkdir artifact
           mv Telegram artifact/
+
       - uses: actions/upload-artifact@master
         if: env.UPLOAD_ARTIFACT == 'true'
-        name: Upload artifact.
+        name: Upload artifact
         with:
           name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.REPO_NAME }}/out/Debug/artifact/
+          path: ${{ env.REPO_NAME }}/out/${{ env.BUILD_TYPE }}/artifact/
+
+      - name: Send to Telegram
+        if: env.SEND_TO_TG == 'true'
+        shell: python
+        env:
+          API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT }}
+          CHANNEL_ID: ${{ secrets.TELEGRAM_TO }}
+        run: |
+          import asyncio
+          import os
+          from pyrogram import Client
+          async def main():
+            bot = Client(
+              "client",
+              in_memory=True,
+              api_id=os.environ["API_ID"],
+              api_hash=os.environ["API_HASH"],
+              bot_token=os.environ["BOT_TOKEN"],
+            )
+            async with bot:
+              ver_name = os.environ["APP_VER_NAME"]
+              ver_code = os.environ["APP_VER_CODE"]
+              build_type = os.environ["BUILD_TYPE"]
+              channel_id = int(os.environ["CHANNEL_ID"])
+              beta = True if (os.environ["APP_BETA"] == "1") else False
+              caption = f"{ver_name} ({ver_code})\nBuild type: `{build_type}`\n#Telegram #Linux"
+              caption = f"{caption} #Beta" if (beta) else caption
+              document = f"{os.environ['REPO_NAME']}/out/{os.environ['BUILD_TYPE']}/artifact/Telegram"
+              await bot.send_document(
+                chat_id=channel_id,
+                document=document,
+                caption=caption,
+              )
+          async def wait():
+            try:
+              await asyncio.wait_for(main(), timeout=600)
+            except asyncio.TimeoutError:
+              print("message send timeout!!!")
+              exit(1)
+          asyncio.run(wait())
